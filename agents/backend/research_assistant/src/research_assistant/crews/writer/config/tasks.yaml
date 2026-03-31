@@ -1,0 +1,13 @@
+summary_and_polish_task:
+  description: >
+    1. Receive the long-form essay regarding {topic}.
+    2. Conduct a rigorous spelling and grammar check (Proofreading).
+    3. Rewrite the content into a high-level Executive Summary.
+    4. Ensure the final output is formatted for maximum readability (clear headings, 
+       bullet points for key facts, and a concluding 'Final Verdict' section).
+    5. Remove any meta-talk, AI-style introductions (like "Here is the summary"), 
+       or markdown artifacts like '```'.
+  expected_output: >
+    A polished, professional Executive Summary of the research on {topic}. 
+    The output should be ready for immediate distribution to stakeholders.
+  agent: presenter

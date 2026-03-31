@@ -1,0 +1,48 @@
+# Backend
+flask
+flask-cors
+python-dotenv
+gunicorn
+easy-ocr
+pyaudio
+speech-recognition
+pyttsx3
+
+
+# Frontend
+flet
+
+# AI / Agents
+crewai
+crewai-tools
+
+# LLM
+
+
+# Web Search
+duckduckgo-search
+tavily-python
+serpapi
+
+# Web Scraping
+requests
+beautifulsoup4
+lxml
+newspaper3k
+trafilatura
+playwright
+selenium
+
+# Document Processing
+pypdf
+pdfplumber
+python-docx
+
+# Async
+aiohttp
+
+# Utilities
+pydantic
+tqdm
+loguru
+tenacity

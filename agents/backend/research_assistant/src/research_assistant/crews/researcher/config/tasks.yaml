@@ -1,0 +1,10 @@
+research_task:
+  description: >
+    1. Conduct a deep-dive search into {topic} using available tools.
+    2. Identify at least 10 distinct, high-quality facts or data points.
+    3. Include dates, names of institutions, or specific metrics where possible.
+    4. Ensure all information is relevant to the current year (2026).
+  expected_output: >
+    A bulleted list of high-density research points about {topic}. 
+    Each point should be a standalone fact. Do not write an introduction or conclusion.
+  agent: researcher_agent

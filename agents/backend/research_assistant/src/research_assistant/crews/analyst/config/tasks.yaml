@@ -1,0 +1,15 @@
+reporting_task:
+  description: >
+    1. Review the raw research results provided regarding {topic}.
+    2. Identify the 4-5 most critical thematic pillars (e.g., History, Impact, Future Outlook).
+    3. For each pillar, synthesize the relevant facts from the research into a coherent summary.
+    4. Flag any conflicting information or data gaps that the writer should be aware of.
+    5. Organize the findings into a structured 'Analytic Brief' that serves as a blueprint for a long-form essay.
+  expected_output: >
+    A structured Analytic Brief in Markdown. It must include:
+    - An Executive Summary of the research.
+    - Thematic Sections with synthesized bullet points.
+    - A 'Key Takeaways' list.
+    - A suggested narrative structure for the final essay.
+    (Do not use code blocks or '```')
+  agent: reporting_analyst
