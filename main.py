@@ -1,439 +1,364 @@
-"""
-AI Research Assistant — Flet Frontend (Flet 0.80+ compatible)
-A modern multi-agent AI chat interface with simulated agent workflow.
-
-To run:
-    pip install flet
-    python main.py
-
-Future backend swap:
-    Replace `simulate_api_request()` body with:
-        import requests
-        response = requests.post("http://localhost:5000/ask", json={"question": question})
-        return response.json()
-"""
-
 import flet as ft
+import random
 import time
+import math
+import speech_recognition as sr
+import pyttsx3
+from services.vision.ocr import OCRPipeline
 import threading
+import requests
+import re
 
-
-# ─────────────────────────────────────────────
-# DEMO API SIMULATION
-# Replace this function body to connect to a real backend
-# ─────────────────────────────────────────────
-
-def simulate_api_request(question: str) -> dict:
-    """
-    Simulates a backend API call.
-    Returns a dict with research, analysis, and final_answer keys.
-
-    Future replacement:
-        import requests
-        response = requests.post("http://localhost:5000/ask", json={"question": question})
-        return response.json()
-    """
-    q = question.lower()
-
-    if any(w in q for w in ["renewable", "solar", "wind", "energy"]):
-        return {
-            "research": "Found 12 peer-reviewed sources on renewable energy. Key sources include IPCC reports, IEA data, and Nature Energy journals covering solar, wind, hydro, and geothermal technologies.",
-            "analysis": "Cross-referencing sources reveals consistent findings: renewables now account for 30%+ of global electricity. Cost curves show exponential decreases — solar dropped 89% since 2010. Key challenge: grid intermittency and storage.",
-            "final_answer": "Renewable energy refers to power derived from naturally replenishing sources such as sunlight, wind, rain, tides, and geothermal heat. Unlike fossil fuels, these resources are virtually inexhaustible on human timescales. Modern renewable technologies have seen dramatic cost reductions, making them the cheapest form of new electricity generation in most markets. The main engineering challenges involve grid stability, energy storage, and geographic distribution of resources.",
-        }
-    elif any(w in q for w in ["ai", "artificial intelligence", "machine learning", "neural"]):
-        return {
-            "research": "Surveyed 20+ sources including ArXiv preprints, Google DeepMind publications, and OpenAI technical reports. Identified key milestones: perceptrons (1958), backpropagation (1986), deep learning (2012), transformers (2017), LLMs (2020+).",
-            "analysis": "The field has undergone three major paradigm shifts: symbolic AI → connectionism, shallow → deep networks, supervised → self-supervised learning. Current frontier models demonstrate emergent capabilities not present in smaller models.",
-            "final_answer": "Artificial Intelligence is the simulation of human intelligence processes by machines. Modern AI is dominated by machine learning — systems that learn from data rather than following explicit rules. Deep learning, using multi-layered neural networks, has enabled breakthroughs in image recognition, natural language processing, and game-playing. Large Language Models represent the current frontier, capable of complex reasoning, code generation, and creative tasks.",
-        }
-    elif any(w in q for w in ["climate", "global warming", "carbon", "greenhouse"]):
-        return {
-            "research": "Compiled data from NASA GISS, NOAA, and IPCC AR6 report. Global average temperature has risen 1.1°C above pre-industrial levels. CO₂ concentration at 421 ppm — highest in 800,000 years.",
-            "analysis": "Causal attribution studies show >97% scientific consensus that current warming is human-caused. Tipping points identified: Arctic sea ice loss, Amazon dieback, permafrost thaw create self-reinforcing feedback loops irreversible above 1.5–2°C.",
-            "final_answer": "Climate change refers to long-term shifts in global temperatures and weather patterns. Since the Industrial Revolution, human activities — primarily burning fossil fuels — have been the main driver. The release of greenhouse gases traps solar heat in the atmosphere. Consequences include rising sea levels, more frequent extreme weather events, ecosystem disruption, and threats to food security. The Paris Agreement aims to limit warming to 1.5°C, requiring rapid decarbonization of the global economy by mid-century.",
-        }
-    else:
-        return {
-            "research": f"Searched academic databases, news archives, and expert sources for: '{question}'. Found relevant materials across multiple domains.",
-            "analysis": f"Synthesizing gathered information on '{question}'. Identified key themes, conflicting perspectives, and areas of consensus among leading sources.",
-            "final_answer": f"Based on comprehensive research into '{question}': This is a multifaceted topic with several important dimensions. The available evidence suggests a nuanced answer that depends on context, methodology, and the specific aspect being addressed. Further investigation with more specific parameters would yield more targeted insights.",
-        }
-
-
-# ─────────────────────────────────────────────
-# MESSAGE BUILDER FUNCTIONS
-# ─────────────────────────────────────────────
-
-def build_user_message(text: str) -> ft.Container:
-    """Right-aligned blue user chat bubble."""
-    return ft.Container(
-        content=ft.Column(
-            [
-                ft.Text("You", size=11, color="#94a3b8",
-                        weight=ft.FontWeight.W_500),
-                ft.Text(text, color="white", size=14, selectable=True),
-            ],
-            spacing=4,
-            tight=True,
-        ),
-        bgcolor="#1d4ed8",
-        padding=ft.Padding.symmetric(horizontal=16, vertical=12),
-        border_radius=ft.BorderRadius.only(
-            top_left=16, top_right=4, bottom_left=16, bottom_right=16
-        ),
-        margin=ft.Margin.only(left=80, bottom=8),
-    )
-
-
-def build_agent_message(agent_name: str, text: str) -> ft.Container:
-    """Left-aligned agent chat bubble with per-agent accent color."""
-    agent_colors = {
-        "Research Agent": "#0ea5e9",
-        "Analyst Agent":  "#a855f7",
-        "Writer Agent":   "#f59e0b",
-    }
-    name_color = agent_colors.get(agent_name, "#94a3b8")
-
-    return ft.Container(
-        content=ft.Column(
-            [
-                ft.Text(agent_name, size=11, color=name_color,
-                        weight=ft.FontWeight.W_600),
-                ft.Text(text, color="#cbd5e1", size=14, selectable=True),
-            ],
-            spacing=4,
-            tight=True,
-        ),
-        bgcolor="#1e293b",
-        padding=ft.Padding.symmetric(horizontal=16, vertical=12),
-        border_radius=ft.BorderRadius.only(
-            top_left=4, top_right=16, bottom_left=16, bottom_right=16
-        ),
-        margin=ft.Margin.only(right=80, bottom=8),
-        border=ft.Border.all(1, "#334155"),
-    )
-
-
-def build_final_answer_message(text: str) -> ft.Container:
-    """Left-aligned green final answer bubble."""
-    return ft.Container(
-        content=ft.Column(
-            [
-                ft.Row(
-                    [
-                        ft.Icon(ft.Icons.AUTO_AWESOME,
-                                color="#4ade80", size=14),
-                        ft.Text(
-                            "Final Answer",
-                            size=11,
-                            color="#4ade80",
-                            weight=ft.FontWeight.W_600,
-                        ),
-                    ],
-                    spacing=4,
-                    tight=True,
-                ),
-                ft.Text(text, color="#ecfdf5", size=15, selectable=True),
-            ],
-            spacing=6,
-            tight=True,
-        ),
-        bgcolor="#052e16",
-        padding=ft.Padding.symmetric(horizontal=16, vertical=14),
-        border_radius=ft.BorderRadius.only(
-            top_left=4, top_right=16, bottom_left=16, bottom_right=16
-        ),
-        margin=ft.Margin.only(right=40, bottom=8),
-        border=ft.Border.all(1, "#166534"),
-    )
-
-
-def build_loading_indicator(agent_name: str) -> ft.Container:
-    """Typing / loading indicator shown while an agent processes."""
-    agent_colors = {
-        "Research Agent": "#0ea5e9",
-        "Analyst Agent":  "#a855f7",
-        "Writer Agent":   "#f59e0b",
-    }
-    name_color = agent_colors.get(agent_name, "#94a3b8")
-
-    return ft.Container(
-        content=ft.Column(
-            [
-                ft.Text(agent_name, size=11, color=name_color,
-                        weight=ft.FontWeight.W_600),
-                ft.Row(
-                    [
-                        ft.ProgressRing(width=14, height=14,
-                                        stroke_width=2, color=name_color),
-                        ft.Text("Processing...", color="#64748b",
-                                size=13, italic=True),
-                    ],
-                    spacing=8,
-                    tight=True,
-                ),
-            ],
-            spacing=4,
-            tight=True,
-        ),
-        bgcolor="#1e293b",
-        padding=ft.Padding.symmetric(horizontal=16, vertical=12),
-        border_radius=ft.BorderRadius.only(
-            top_left=4, top_right=16, bottom_left=16, bottom_right=16
-        ),
-        margin=ft.Margin.only(right=80, bottom=8),
-        border=ft.Border.all(1, "#334155"),
-    )
-
-
-def build_chip(label: str) -> ft.Container:
-    """Small suggestion chip for the welcome screen."""
-    return ft.Container(
-        content=ft.Text(label, color="#64748b", size=12),
-        padding=ft.Padding.symmetric(horizontal=12, vertical=6),
-        bgcolor="#1e293b",
-        border_radius=20,
-        border=ft.Border.all(1, "#334155"),
-    )
-
-
-# ─────────────────────────────────────────────
-# MAIN APP
-# ─────────────────────────────────────────────
-
+#______________________________________________________________________________________________________________________
 def main(page: ft.Page):
-    # ── Page config ─────────────────────────
-    page.title = "AI Research Assistant"
-    page.bgcolor = "#0f172a"
+    # Track the current engine globally within main
+    tts_control = {"engine": None}
+
+    page.title = "AI Legal Assistant"
+    page.bgcolor = "#0B0F1A"
     page.padding = 0
-    page.window.icon = "assets/icon.png"  # Custom icon from assets/
+    page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
+    page.vertical_alignment = ft.MainAxisAlignment.CENTER
 
-    # ── Mutable state ────────────────────────
-    is_processing = False
+    #############################################
+    #___________________FUNCTIONALITY___________
+        #a user may want to save the result 
+    def report_file(file_path):
+        def read_content():
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    return f.read()
+            except FileNotFoundError:
+                speaker_on(f"Error: {file_path} does not exist.")
 
-    # ── Header ──────────────────────────────
+        def write_content(data, append=False):
+            # 'a' mode appends to the end, 'w' overwrites the file
+            mode = 'a' if append else 'w'
+            try:
+                with open(file_path, mode, encoding='utf-8') as f:
+                    f.write(data)
+                #Successfully written"
+                speaker_on(f"Successfully written to {file_path}.")
+            except Exception as e:
+                print(f"Failed to write!..{e}")
+                speaker_on(f"Failed to write!")
+
+    
+    #detects text and numbers from images, text, pdfs and attaches a prompt of and sends to the sever
+    def read_media_text():
+        try:
+            print("the speaker is working")
+            speaker_on("Sorry, add media is not yet functional")
+        except Exception as e:
+            speaker_on("Sorry, an error occured. Please try again.")
+
+    #detects voice, convert to text automatically sends to the sever
+    def voice_to_text():
+        try:
+            recognizer =  sr.Recognizer() #initialize microphone
+            microphone = sr.Microphone()
+            with microphone as source: #audio source is microphone
+                recognizer.adjust_for_ambient_noise(source)
+                audio = recognizer.listen(source)
+            #detect and return response
+            speech_response = recognizer.recognize_google(audio)
+            input_field.value = speech_response
+            page.update()
+            send_appeal()
+        except Exception as e:
+            print("Error when converting voice to speech")
+            speaker_on("Sorry, I couldn't understand that. Please try again.")
+
+    def toggle_ui_on_off_speaking(speaking: bool):
+        """Helper to switch visibility between Input and Mute controls."""
+        # When speaking: hide input, show mute
+        # When silent: show input, hide mute
+        input_container.visible = not speaking
+        microphone_off.visible = speaking
+        page.update()
+
+    def speaker_off(e=None):
+            """Stops the current engine if it exists."""
+            if tts_control["engine"]:
+                try:
+                    tts_control["engine"].stop()
+                    tts_control["engine"] = None
+                except Exception as ex:
+                    print(f"Mute Error: {ex}")
+            # Once stopped, bring back the input field
+            toggle_ui_on_off_speaking(speaking=True)
+
+    def speaker_on(text: str):
+        # 1. Switch UI to "Mute Mode" immediately
+        toggle_ui_on_off_speaking(speaking=False)
+
+        """Starts a new speech thread, stopping any existing one first."""
+        speaker_off() # Stop current speech if any
+
+        def talk():
+            try:
+                engine = pyttsx3.init() 
+                tts_control["engine"] = engine #save reference for muting
+
+                engine.say(text)
+                engine.runAndWait()
+
+                #cleanup after finishing naturally
+                toggle_ui_on_off_speaking(speaking=False)
+                tts_control["engine"] = None
+            except Exception as e:
+                print(f"TTS Error: {e}")
+                toggle_ui_on_off_speaking(speaking=False)
+
+        # Run this in a separate thread so it doesn't freeze your Flet UI
+        threading.Thread(target=talk, daemon=True).start()
+
+    # function to clean up the json response from the server for better text to speech and display formatting
+    def clean_ai_response(data):
+        #1. handle dict vs string
+        if isinstance(data, dict):
+            text = data.get("research_results", "")
+        else:
+            text = str(data)
+        
+        #2. (clean text) Remove bullet points and other unwanted characters
+        text = text.replace("•", "")
+        text = re.sub(r'\s*\n\s*', ' ', text)
+        text = re.sub(r'\s+', ' ', text) #.strip()
+        
+        #3. Sentence cleanup 
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        clean_text = ". ".join(sentences)
+
+        return clean_text
+    
+    # function to return chunks of text for better tts performance and display formatting
+    def split_for_speech(text, max_len=200):
+        words = text.split()
+        chunks = []
+        current = []
+        for word in words:
+            current.append(word)
+            if len(" ".join(current)) > max_len:
+                chunks.append(" ".join(current))
+                current = []
+        if current:
+            chunks.append(" ".join(current))
+        return chunks
+    
+    def toggle_loading(is_loading: bool):
+        """Swaps the send button for a loading ring."""
+        send_appeal_button.visible = not is_loading
+        loading_indicator.visible = is_loading
+        page.update()
+
+    #send the message to the server
+    def send_appeal(e=None):
+        user_query = input_field.value
+        if not user_query:
+            return
+    
+        #show loading state
+        toggle_loading(True)
+
+        def make_request():
+            try:
+                res = requests.post(
+                    url="http://127.0.0.1:5000/user_query",
+                    timeout = 120,
+                    json={
+                        "user_query": user_query
+                    }
+                )
+                if res.status_code == 200:
+                    response = res.json()
+                    
+                    results = response.get("research_results", {})
+
+                    clean_text = clean_ai_response(results)
+
+
+                    input_field.value = ""
+                    toggle_loading(False)
+
+                    chunks = split_for_speech(clean_text)
+                    
+                    for chunk in chunks:
+                        print(chunk)
+                        speaker_on(chunk)
+
+                    #raw_response = response.get("research_results", f"Sorry, I couldn't get a response for {user_query}.")
+                    #input_field.value = ""
+                    #toggle_loading(False)
+                    #speaker_on(raw_response)
+                else:
+                    toggle_loading(False)
+                    speaker_on("Sever error. Please try again.")
+            except Exception as e:
+                print(f"Request Error: {e}")
+                toggle_loading(False)
+                speaker_on("connection lost. Check your server")
+        # Run request in thread so it doesn't freeze the wave animation
+        threading.Thread(target=make_request, daemon=True).start()
+
+
+    ###################################################
+    #___________________CONTROLS___________________
+    # ---------- HEADER ----------
     header = ft.Container(
         content=ft.Row(
-            [
-                ft.Text("🤖", size=24),
-                ft.Column(
-                    [
-                        ft.Text(
-                            "AI Research Assistant",
-                            color="white",
-                            size=18,
-                            weight=ft.FontWeight.BOLD,
-                        ),
-                        ft.Text(
-                            "Multi-Agent AI Research System",
-                            color="#475569",
-                            size=12,
-                        ),
-                    ],
-                    spacing=2,
-                    tight=True,
-                ),
-                ft.Container(expand=True),
+            alignment=ft.MainAxisAlignment.CENTER,
+            margin=ft.Margin.only(bottom=20),
+            controls=[
                 ft.Container(
-                    content=ft.Row(
-                        [
-                            ft.Container(width=8, height=8,
-                                         bgcolor="#4ade80", border_radius=4),
-                            ft.Text("3 agents online",
-                                    color="#4ade80", size=11),
-                        ],
-                        spacing=6,
-                        tight=True,
+                    content=ft.Text(
+                        "TROVE AI",
+                        size=32,
+                        weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.WHITE,
+                        italic=True,
                     ),
-                    padding=ft.Padding.symmetric(horizontal=10, vertical=6),
-                    bgcolor="#052e16",
-                    border_radius=20,
-                    border=ft.Border.all(1, "#166534"),
+                    alignment=ft.Alignment.CENTER,
                 ),
             ],
-            alignment=ft.MainAxisAlignment.START,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=12,
         ),
-        padding=ft.Padding.symmetric(horizontal=24, vertical=16),
-        bgcolor="#0f172a",
-        border=ft.Border.only(bottom=ft.BorderSide(1, "#1e293b")),
+        padding=ft.Padding.symmetric(horizontal=20, vertical=10),
     )
 
-    # ── Chat column ──────────────────────────
-    chat_column = ft.Column(
-        [],
+# ---------- SOUND WAVE (SIMULATED) ----------
+    bars = []
+    for i in range(20):
+        bar = ft.Container(
+            width=4,
+            height=20,
+            border_radius=2,
+            gradient=ft.LinearGradient(
+                colors=["#00C6FF", "#7F00FF"]
+            ),
+        )
+        bars.append(bar)
+
+    wave_row = ft.Row(
+        controls=bars,
+        alignment=ft.MainAxisAlignment.CENTER,
         spacing=4,
-        scroll=ft.ScrollMode.AUTO,
+    )
+
+    def animate_wave():
+        while True:
+            for i, bar in enumerate(bars):
+                new_height = 10 + abs(math.sin(time.time() * 2 + i)) * 40
+                bar.height = new_height
+            page.update()
+            time.sleep(0.05)
+
+    threading.Thread(target=animate_wave, daemon=True).start()
+
+    animated_sound_wave = ft.Row(
+        controls=wave_row,
+        alignment=ft.MainAxisAlignment.CENTER,
+        spacing=4,
+    )
+
+
+    microphone_off = ft.IconButton( 
+        icon=ft.Icons.MIC_OFF, 
+        icon_size=30, 
+        align=ft.Alignment.CENTER, 
+        icon_color=ft.Colors.GREY_600,
+        visible=False,
+        on_click=speaker_off
+    )
+
+    loading_indicator = ft.ProgressRing(
+                        width=20, 
+                        height=20, 
+                        stroke_width=2, 
+                        visible=False)
+    
+    # ---------- INPUT FIELD ----------
+    input_field = ft.TextField(
+        hint_text="ASK Trove...",
+        border=ft.InputBorder.NONE,
         expand=True,
-        auto_scroll=True,
+        text_size=14,
+        color=ft.Colors.WHITE,
+        multiline=True,
+        max_lines=6
     )
 
-    chat_area = ft.Container(
-        content=chat_column,
-        expand=True,
-        padding=ft.Padding.symmetric(horizontal=24, vertical=16),
-    )
-
-    # ── Welcome placeholder ──────────────────
-    welcome = ft.Container(
-        content=ft.Column(
-            [
-                ft.Text("👋  Welcome", color="#94a3b8",
-                        size=14, weight=ft.FontWeight.W_500),
-                ft.Text(
-                    "Ask any research question and watch three specialized AI agents\n"
-                    "collaborate to deliver a comprehensive answer.",
-                    color="#475569",
-                    size=13,
-                    text_align=ft.TextAlign.CENTER,
-                ),
-                ft.Row(
-                    [
-                        build_chip("🌱  Renewable Energy"),
-                        build_chip("🤖  Artificial Intelligence"),
-                        build_chip("🌍  Climate Change"),
-                    ],
-                    alignment=ft.MainAxisAlignment.CENTER,
-                    wrap=True,
-                    spacing=8,
-                ),
-            ],
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=10,
-        ),
-        padding=ft.Padding.symmetric(horizontal=32, vertical=32),
-        margin=ft.Margin.only(top=40, bottom=20),
-        alignment=ft.Alignment.CENTER,
-    )
-    chat_column.controls.append(welcome)
-
-    # ── Input field ──────────────────────────
-    question_field = ft.TextField(
-        hint_text="Ask a research question...",
-        hint_style=ft.TextStyle(color="#334155"),
-        text_style=ft.TextStyle(color="white", size=14),
-        bgcolor="#1e293b",
-        border_color="#334155",
-        focused_border_color="#3b82f6",
-        border_radius=12,
-        expand=True,
-        cursor_color="white",
-        content_padding=ft.Padding.symmetric(horizontal=16, vertical=14),
-        shift_enter=False,
-    )
-
-    # ft.Button replaces deprecated ft.ElevatedButton in Flet 0.80+
-    send_button = ft.Button(
-        "Ask",
-        style=ft.ButtonStyle(
-            bgcolor={"": "#2563eb"},
-            color={"": "white"},
-            shape={"": ft.RoundedRectangleBorder(radius=10)},
-            padding={"": ft.Padding.symmetric(horizontal=20, vertical=14)},
-        ),
-    )
-
-    input_area = ft.Container(
+    input_container = ft.Container(
+        visible=True,
         content=ft.Row(
-            [question_field, send_button],
-            spacing=10,
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            controls=[
+                ft.Row(
+                    spacing=-10,
+                    controls=[
+                        add_media_btn := ft.IconButton(
+                            icon=ft.Icons.ATTACH_FILE,
+                            icon_color="#5D41F7",
+                            on_click=read_media_text
+                        ),
+                        camera_btn := ft.IconButton(
+                            icon=ft.Icons.CAMERA_ALT,
+                            icon_color="#5D41F7",
+                        ),
+                        microphone_btn := ft.IconButton(
+                            icon=ft.Icons.MIC,
+                            icon_color="#5D41F7",
+                            on_click=voice_to_text
+                        ),
+                    ]
+                ),
+                input_field,
+                #use stack to swap send button with loading indicator
+                ft.Stack(controls=[
+                        send_appeal_button := ft.IconButton(
+                        icon=ft.Icons.SEND,
+                        icon_color="#00C6FF",
+                        on_click = send_appeal
+                    ),
+                    ft.Container(
+                        content=loading_indicator,
+                        padding=10, #match button spacing
+                    )
+                ])
+            
+            ],
         ),
-        padding=ft.Padding.symmetric(horizontal=24, vertical=16),
-        bgcolor="#0f172a",
-        border=ft.Border.only(top=ft.BorderSide(1, "#1e293b")),
+        padding=10,
+        margin=ft.Margin.symmetric(horizontal=20),
+        border_radius=30,
+        bgcolor="#1A1F2E",
     )
 
-    # ── Helpers ──────────────────────────────
-
-    def add_message(widget):
-        """Append widget to chat and refresh UI."""
-        chat_column.controls.append(widget)
-        page.update()
-
-    def remove_widget(widget):
-        """Remove a widget from chat (e.g. loading spinner)."""
-        if widget in chat_column.controls:
-            chat_column.controls.remove(widget)
-
-    # ── Agent workflow (background thread) ───
-
-    def handle_submit(question: str):
-        nonlocal is_processing
-        if is_processing or not question.strip():
-            return
-
-        is_processing = True
-        send_button.disabled = True
-        question_field.value = ""
-        page.update()
-
-        # Remove welcome screen on first question
-        if welcome in chat_column.controls:
-            chat_column.controls.remove(welcome)
-
-        # Step 1 — User message appears immediately
-        add_message(build_user_message(question))
-
-        # Call simulated (or real) API
-        api_data = simulate_api_request(question)
-
-        # Step 2 — Research Agent
-        loader1 = build_loading_indicator("Research Agent")
-        add_message(loader1)
-        time.sleep(1.2)
-        remove_widget(loader1)
-        add_message(build_agent_message(
-            "Research Agent", api_data["research"]))
-
-        # Step 3 — Analyst Agent
-        loader2 = build_loading_indicator("Analyst Agent")
-        add_message(loader2)
-        time.sleep(1.4)
-        remove_widget(loader2)
-        add_message(build_agent_message("Analyst Agent", api_data["analysis"]))
-
-        # Step 4 — Writer Agent
-        loader3 = build_loading_indicator("Writer Agent")
-        add_message(loader3)
-        time.sleep(1.0)
-        remove_widget(loader3)
-        add_message(build_agent_message("Writer Agent",
-                    "Composing final answer from research synthesis..."))
-
-        # Step 5 — Final Answer
-        time.sleep(0.8)
-        add_message(build_final_answer_message(api_data["final_answer"]))
-
-        is_processing = False
-        send_button.disabled = False
-        page.update()
-
-    # ── Event wiring ─────────────────────────
-
-    def on_send_click(e):
-        question = question_field.value.strip()
-        if question:
-            threading.Thread(target=handle_submit, args=(
-                question,), daemon=True).start()
-
-    send_button.on_click = on_send_click
-    question_field.on_submit = on_send_click  # Enter key sends
-
-    # ── Build page ───────────────────────────
+    # ---------- MAIN LAYOUT ----------
     page.add(
         ft.Column(
-            [header, chat_area, input_area],
             expand=True,
-            spacing=0,
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            controls=[
+                header,
+                ft.Column(
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        animated_sound_wave
+                    ],
+                ),
+                ft.Column(
+                    controls=[
+                        microphone_off,
+                        input_container,
+                        ft.Divider()
+                    ],
+                ),
+            ],
         )
     )
 
 
-# ─────────────────────────────────────────────
-# ENTRY POINT — Flet 0.80+ style
-# ─────────────────────────────────────────────
-
-ft.run(main, assets_dir="assets/", view=ft.WEB_BROWSER, port=8080)
+ft.run(main)
